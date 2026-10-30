@@ -25,11 +25,6 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // The scoring model is read from disk at runtime (artifacts/model.json). Vercel only
-  // bundles files it can trace statically, so include it explicitly for every route.
-  outputFileTracingIncludes: {
-    "/**/*": ["./artifacts/**/*"],
-  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

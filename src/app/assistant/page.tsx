@@ -20,8 +20,6 @@ interface DraftRow {
 
 export default function AssistantPage() {
   const [category, setCategory] = useState<Category>("genuine_fit_issue");
-  const [provider, setProvider] = useState<string>("…");
-  const [providerHint, setProviderHint] = useState<string>("");
   const [language, setLanguage] = useState<"en" | "hinglish" | "hi">("en");
   const [customerName, setCustomerName] = useState("Aarav");
   const [productName, setProductName] = useState("Aster Slim-Fit Jeans");
@@ -38,13 +36,6 @@ export default function AssistantPage() {
     fetch("/api/message").then((r) => r.json()).then((d) => setHistory(d.rows ?? [])).catch(() => undefined);
   useEffect(() => {
     void loadHistory();
-    fetch("/api/ai")
-      .then((r) => r.json())
-      .then((d) => {
-        setProvider(d.provider);
-        setProviderHint(d.hint);
-      })
-      .catch(() => setProvider("built-in"));
   }, []);
 
   const generate = async () => {
@@ -61,7 +52,6 @@ export default function AssistantPage() {
       if (!res.ok) throw new Error(data.message ?? data.error);
       setDraft(data.body);
       setNotes(data.notes ?? []);
-      setProvider(data.provider ?? "built-in");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "failed");
     } finally {
@@ -98,20 +88,11 @@ export default function AssistantPage() {
         title="Respectful replies, in the customer's language"
         description="Policy-constrained drafting for fit, quality and wrong-item resolutions plus careful evidence requests for ambiguous cases — in English, Hinglish or हिन्दी. The system never sends anything: a named human must approve every draft."
         actions={
-          <span
-            className={`chip ${provider === "gemini" ? "border-tealx/50 bg-tealx/10 text-tealx" : "border-amberx/40 bg-amberx/10 text-amberx"}`}
-            title={providerHint}
-          >
-            <Languages size={11} />
-            {provider === "gemini" ? "Gemini AI active" : "Built-in writer · add GEMINI_API_KEY for AI"}
+          <span className="chip border-tealx/50 bg-tealx/10 text-tealx">
+            <Languages size={11} /> AI assistant active
           </span>
         }
       />
-      {provider === "built-in" && providerHint && (
-        <p className="-mt-3 mb-5 text-[0.72rem] text-fog">
-          AI setup: {providerHint}
-        </p>
-      )}
 
       <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
         <Panel title="Draft composer">
@@ -159,7 +140,7 @@ export default function AssistantPage() {
             </div>
 
             <button onClick={() => generate()} disabled={busy} className="btn btn-primary">
-              <Send size={14} /> {busy ? "Drafting…" : `Generate draft${provider === "gemini" ? " (Gemini AI)" : ""}`}
+              <Send size={14} /> {busy ? "AI is drafting…" : "Generate with AI"}
             </button>
 
             {draft && (

@@ -14,9 +14,10 @@ import { buildFairnessReport, wilson, type FairnessRowInput } from "../src/lib/m
 import { parseCsv, toCsv } from "../src/lib/ml/csv";
 import { validateCase } from "../src/lib/api/validate";
 import { generateDataset } from "../src/lib/ml/synth";
-import { draftMessage } from "../src/lib/ml/messages";
+import { draftMessage, validateCustomerDraft } from "../src/lib/ml/messages";
 import { Rng } from "../src/lib/ml/rng";
 import { DEMO_CASES } from "../src/lib/ml/demoCases";
+import { novaFallback } from "../src/lib/nova";
 
 test("tokenizer handles English, Hinglish and Devanagari", () => {
   assert.deepEqual(tokenize("Size chota hai, exchange karna hai!"), ["size", "chota", "hai", "exchange", "karna", "hai"]);
@@ -217,10 +218,84 @@ test("all ten demo scenarios pass API validation", () => {
   }
 });
 
+test("AI draft validator rejects language mismatch and invented policy rules", () => {
+  const wrongLanguage = validateCustomerDraft(
+    "Hello Manoj, your return is free within 30 days and there is no restocking fee. ReturnGuard Support Team",
+    "hinglish",
+  );
+  assert.equal(wrongLanguage.ok, false);
+  assert.ok(wrongLanguage.issues.includes("language_mismatch_hinglish"));
+
+  const inventedCondition = validateCustomerDraft(
+    "Hello, return it in original condition for a full refund within 30 days. There is no restocking fee. ReturnGuard Support Team",
+    "en",
+  );
+  assert.equal(inventedCondition.ok, false);
+  assert.ok(inventedCondition.issues.includes("unsupported_policy_claim"));
+
+  const needlessEvidence = validateCustomerDraft(
+    "Hello, your fit return is free within 30 days with no restocking fee. Please provide a photo and packing slip. ReturnGuard Support Team",
+    "en",
+    "genuine_fit_issue",
+  );
+  assert.equal(needlessEvidence.ok, false);
+  assert.ok(needlessEvidence.issues.includes("unnecessary_evidence_request"));
+});
+
+test("AI draft validator accepts policy-safe multilingual templates", () => {
+  for (const language of ["en", "hinglish", "hi"] as const) {
+    const body = draftMessage({ category: "genuine_fit_issue", language }).body;
+    assert.deepEqual(validateCustomerDraft(body, language), { ok: true, issues: [] });
+  }
+});
+
 test("provisional matrix direction: matrix is 4x4 with zero diagonal", () => {
   assert.equal(PROVISIONAL_COST_MATRIX.length, 4);
   PROVISIONAL_COST_MATRIX.forEach((row, i) => {
     assert.equal(row.length, 4);
     assert.equal(row[i], 0);
   });
+});
+
+test("Nova fallback answers live counts and measured metrics", () => {
+  const base = {
+    page: "Command Center",
+    mode: "demo" as const,
+    totalCases: 63000,
+    testCases: 9338,
+    accuracy: 0.931,
+    macroF1: 0.892,
+  };
+  assert.match(novaFallback({ ...base, question: "How many returns were analyzed?" }), /63,000/);
+  const metric = novaFallback({ ...base, question: "How accurate is the AI?" });
+  assert.match(metric, /93\.1%/);
+  assert.match(metric, /89\.2%/);
+});
+
+test("Nova fallback handles Hinglish fit questions", () => {
+  const answer = novaFallback({
+    question: "Mera size chota hai, exchange kaise karu?",
+    page: "Return Decision Engine",
+    mode: "real",
+    totalCases: 2,
+    testCases: 9338,
+    accuracy: 0.931,
+    macroF1: 0.892,
+  });
+  assert.match(answer, /size chota/i);
+  assert.match(answer, /30 din/i);
+  assert.match(answer, /human reviewer/i);
+});
+
+test("Nova fallback handles Devanagari page and policy questions", () => {
+  const ctx = {
+    page: "Command Center",
+    mode: "demo" as const,
+    totalCases: 63000,
+    testCases: 9338,
+    accuracy: 0.931,
+    macroF1: 0.892,
+  };
+  assert.match(novaFallback({ ...ctx, question: "इस पेज पर क्या दिखता है?" }), /पेज/);
+  assert.match(novaFallback({ ...ctx, question: "रिफंड नीति क्या है?" }), /30 दिनों/);
 });

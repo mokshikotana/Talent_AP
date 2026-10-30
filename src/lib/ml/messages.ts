@@ -6,6 +6,7 @@
 // Languages: English, Hinglish (romanized), Hindi (Devanagari).
 
 import { POLICY, type ReturnClass } from "./labels";
+import { detectLanguage } from "./text";
 
 export type MessageCategory = ReturnClass | "ambiguous";
 export type MessageLanguage = "en" | "hinglish" | "hi";
@@ -90,3 +91,55 @@ export const MESSAGE_LANGUAGES: { id: MessageLanguage; label: string }[] = [
   { id: "hinglish", label: "Hinglish (romanized)" },
   { id: "hi", label: "हिन्दी (Devanagari)" },
 ];
+
+/**
+ * Safety gate for AI-drafted customer messages. An output reaches the UI only
+ * when it matches the requested language and stays inside the actual policy.
+ */
+export function validateCustomerDraft(
+  body: string,
+  language: MessageLanguage,
+  category?: MessageCategory,
+): { ok: boolean; issues: string[] } {
+  const issues: string[] = [];
+  const text = body.trim();
+  const lower = text.toLowerCase();
+  if (text.length < 40 || text.length > 4000) issues.push("invalid_length");
+
+  const detected = detectLanguage(text);
+  if (language === "hinglish" && detected !== "hinglish") issues.push("language_mismatch_hinglish");
+  if (language === "hi" && !/[\u0900-\u097F]/u.test(text)) issues.push("language_mismatch_hindi");
+  if (language === "en" && detected === "hi") issues.push("language_mismatch_english");
+
+  // Unsupported conditions/promises that are NOT in the actual 30-day policy.
+  const forbiddenClaims = [
+    /full refund/i,
+    /original condition/i,
+    /unused condition/i,
+    /tags? (must|should) (be|remain)/i,
+    /refund (has been|is now) (completed|processed)/i,
+    /exchange (is|will be) available/i,
+    /guaranteed (refund|exchange|delivery)/i,
+  ];
+  if (forbiddenClaims.some((re) => re.test(text))) issues.push("unsupported_policy_claim");
+
+  // Fit problems are sizing issues—not evidence investigations. Do not burden a
+  // genuine fit customer with photos or packing-slip requests.
+  if (
+    category === "genuine_fit_issue" &&
+    /(packing slip|photo|photograph|tasveer|फोटो|पैकिंग स्लिप)/i.test(text)
+  ) {
+    issues.push("unnecessary_evidence_request");
+  }
+
+  // Customer accusation guard across supported languages.
+  const accusations = ["fraud", "fraudulent", "cheat", "cheating", "dhoka", "बेईमान", "धोखा"];
+  if (accusations.some((word) => lower.includes(word))) issues.push("accusatory_language");
+
+  // Every response must preserve the core policy facts.
+  if (!text.includes("30")) issues.push("return_window_missing");
+  const feeMention = lower.includes("restocking") || lower.includes("रीस्टॉकिंग");
+  if (!feeMention) issues.push("fee_policy_missing");
+
+  return { ok: issues.length === 0, issues };
+}

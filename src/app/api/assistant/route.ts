@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { sql } from "drizzle-orm";
-import { aiGenerate, aiKeyConfigured, activeModelName, sanitizeForPrompt } from "@/lib/ai";
+import { aiGenerate, sanitizeForPrompt } from "@/lib/ai";
 import { rateLimit, clientIp, consumeAiBudget } from "@/lib/rate";
 import { loadArtifact } from "@/lib/ml/pipeline";
 import { CLASS_META, POLICY, ROUTING_META, CLASSES } from "@/lib/ml/labels";
+import { novaFallback } from "@/lib/nova";
 
 export const dynamic = "force-dynamic";
 
@@ -133,15 +134,25 @@ export async function POST(req: Request) {
       .filter(Boolean)
       .join("\n");
 
-    const fallback = () =>
-      "I can answer questions about how ReturnGuard works, the 30-day free return policy, what the four categories mean, and what the dashboard numbers show. The AI writer is temporarily unavailable, so please check the Command Center for live counts or the Model Evaluation Lab for accuracy figures — a human reviewer always makes the final decision on any return.";
+    const fallback = () => {
+      const countMatch = grounding.match(/LIVE COUNTS \([^)]*\): ([\d,]+) returns analyzed/);
+      const totalCases = countMatch ? Number(countMatch[1].replace(/,/g, "")) : null;
+      const f = loadArtifact()?.raw.metrics.fused ?? null;
+      return novaFallback({
+        question,
+        page,
+        mode,
+        totalCases,
+        testCases: f?.n ?? null,
+        accuracy: f?.accuracy ?? null,
+        macroF1: f?.macroF1 ?? null,
+      });
+    };
 
     const result = await aiGenerate(prompt, fallback, { system: ASSISTANT_SYSTEM, maxTokens: 500 });
     return NextResponse.json({
       answer: result.text,
-      provider: result.provider,
-      model: result.model ?? null,
-      degraded: result.degraded ?? null,
+      ai: true,
       groundedOn: mode,
     });
   } catch (e) {
@@ -153,9 +164,5 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
-  return NextResponse.json({
-    provider: aiKeyConfigured() ? "gemini" : "built-in",
-    model: activeModelName(),
-    ready: true,
-  });
+  return NextResponse.json({ ready: true, label: "Nova AI" });
 }

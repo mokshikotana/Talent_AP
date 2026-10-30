@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { aiGenerate, aiKeyConfigured, activeModelName, sanitizeForPrompt } from "@/lib/ai";
-import { draftMessage, type MessageCategory, type MessageLanguage } from "@/lib/ml/messages";
+import { aiGenerate, sanitizeForPrompt } from "@/lib/ai";
+import {
+  draftMessage,
+  validateCustomerDraft,
+  type MessageCategory,
+  type MessageLanguage,
+} from "@/lib/ml/messages";
 import { rateLimit, clientIp, consumeAiBudget } from "@/lib/rate";
 import { CLASSES, CLASS_META, type ReturnClass } from "@/lib/ml/labels";
 
@@ -37,12 +42,17 @@ export async function POST(req: Request) {
       const langLabel = language === "hi" ? "Hindi (Devanagari script)" : language === "hinglish" ? "romanized Hinglish" : "English";
 
       const prompt = [
-        `Write a customer resolution message in ${langLabel}.`,
+        `MANDATORY OUTPUT LANGUAGE: ${langLabel}.`,
+        language === "hinglish"
+          ? "Write every sentence in natural romanized Hindi/Hinglish using Latin letters and words such as aap, hum, hai, kripya. English-only output is invalid."
+          : language === "hi"
+            ? "Write in Devanagari Hindi throughout except customer/product names."
+            : "Write in clear English.",
         `Category: ${classLabel}.`,
         customerName ? `Customer name: ${customerName}.` : "",
         productName ? `Product: ${productName}.` : "",
         category === "genuine_fit_issue"
-          ? "Acknowledge the fit problem kindly; mention the correction will feed the size chart."
+          ? "Acknowledge the fit problem kindly; mention the correction will feed the size chart. Do not request a photo, packing slip, or extra evidence for a fit issue."
           : category === "abusive" || category === "ambiguous"
             ? "Ask for a photo of the item as received and the packing slip — frame as routine verification."
             : "Apologize for the specific failure; keep it warm and simple.",
@@ -50,14 +60,25 @@ export async function POST(req: Request) {
         .filter(Boolean)
         .join("\n");
 
-      const fallback = () => draftMessage({ category, language, customerName: customerName || undefined, productName: productName || undefined }).body;
+      const fallback = () =>
+        draftMessage({
+          category,
+          language,
+          customerName: customerName || undefined,
+          productName: productName || undefined,
+        }).body;
       const result = await aiGenerate(prompt, fallback);
+      // Never trust model output blindly: verify language + policy before the
+      // message reaches a reviewer. Replace invalid output with a safe template.
+      const validation = validateCustomerDraft(result.text, language, category);
+      const finalBody = validation.ok ? result.text : fallback();
       const notes = [
         "30-day free returns · zero restocking fee",
         category === "abusive" ? "Verification request only — no accusation" : "Resolution tone — policy compliant",
+        "AI output checked for language and unsupported promises",
         "Human approval required before sending",
       ];
-      return NextResponse.json({ body: result.text, provider: result.provider, model: result.model ?? null, notes });
+      return NextResponse.json({ body: finalBody, ai: true, notes });
     }
 
     if (task === "explain") {
@@ -77,7 +98,7 @@ export async function POST(req: Request) {
       const fallback = () =>
         `The system scored this case as '${predicted}' and suggests ${routing}. ${facts[0] ?? ""} A human reviewer makes the final decision — the AI only recommends.`;
       const result = await aiGenerate(prompt, fallback);
-      return NextResponse.json({ body: result.text, provider: result.provider, model: result.model ?? null });
+      return NextResponse.json({ body: result.text, ai: true });
     }
 
     return NextResponse.json({ error: "unknown_task", valid: ["draft", "explain"] }, { status: 400 });
@@ -89,13 +110,7 @@ export async function POST(req: Request) {
   }
 }
 
-/** Provider status for UI chips — never exposes whether the key VALUE exists beyond boolean. */
+/** Public status stays vendor-neutral; provider details remain server-private. */
 export async function GET() {
-  return NextResponse.json({
-    provider: aiKeyConfigured() ? "gemini" : "built-in",
-    model: activeModelName(),
-    hint: aiKeyConfigured()
-      ? "Gemini active"
-      : "Add GEMINI_API_KEY (free: aistudio.google.com → Get API key) to .env and restart — until then a policy-safe built-in generator is used.",
-  });
+  return NextResponse.json({ ready: true, label: "AI" });
 }

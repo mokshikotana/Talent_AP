@@ -8,7 +8,6 @@ import { useMode } from "@/components/ui";
 interface Turn {
   role: "user" | "assistant";
   text: string;
-  provider?: string;
 }
 
 const PAGE_NAMES: Record<string, string> = {
@@ -36,20 +35,12 @@ export function AskNova() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [provider, setProvider] = useState<string>("");
   const pathname = usePathname();
   const { mode } = useMode();
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const pageName = PAGE_NAMES[pathname] ?? "ReturnGuard";
-
-  useEffect(() => {
-    fetch("/api/assistant")
-      .then((r) => r.json())
-      .then((d) => setProvider(d.provider))
-      .catch(() => setProvider("built-in"));
-  }, []);
 
   useEffect(() => {
     if (open) {
@@ -83,15 +74,16 @@ export function AskNova() {
           question,
           page: pageName,
           mode,
-          history: nextTurns.slice(-5).map((t) => ({ role: t.role, text: t.text })),
+          // Only earlier turns belong in history; the active question is sent
+          // separately. Sending it twice caused repetition and weaker answers.
+          history: turns.slice(-4).map((t) => ({ role: t.role, text: t.text })),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         setTurns((t) => [...t, { role: "assistant", text: data.message ?? "Something went wrong. Please try again." }]);
       } else {
-        setTurns((t) => [...t, { role: "assistant", text: data.answer, provider: data.provider }]);
-        if (data.provider) setProvider(data.provider);
+        setTurns((t) => [...t, { role: "assistant", text: data.answer }]);
       }
     } catch {
       setTurns((t) => [
@@ -134,7 +126,7 @@ export function AskNova() {
             <div className="flex-1">
               <p className="text-[0.82rem] font-semibold leading-tight text-snow">Ask Nova</p>
               <p className="text-[0.62rem] leading-tight text-fog">
-                {provider === "gemini" ? "Gemini AI · answers from live app data" : "Built-in help · answers from app data"}
+                AI answers grounded in live app data
               </p>
             </div>
             <button onClick={() => setOpen(false)} aria-label="Close assistant" className="btn !border-transparent !bg-transparent !p-1.5">
