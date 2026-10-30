@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# secrets — NEVER commit
+.env
+.env.local
+.env*.local
+*.pem
+*.key
+
+# next.js
+.next/
+out/
+build/
+next-env.d.ts
+
+# misc
+.DS_Store
+*.log
+npm-debug.log*
+coverage/
+.vercel
+.turbo
